@@ -78,7 +78,7 @@ def val_anchor_box(val_anchor: str):
         "Dollar": "#e0f2ff",        # light blue
         "Bonds": "#ede9fe",         # light purple
         "Dollar & Gold": "#e2e8f0", # grey/blue
-        "Gold & GBP": "#fef3c7",    # gold/yellow
+        "Gold & GBP": "#fef3c7",    # light gold
         "Macro": "#fee2e2",         # light red
     }
     return color_box("Val Anchor (Valuation driver):", val_anchor, colors.get(val_anchor, "#f1f5f9"))
@@ -87,6 +87,7 @@ def val_anchor_box(val_anchor: str):
 # UI Layout
 # =========================
 st.title("Horizon Decision Engine — Delta Model")
+st.markdown("### IS THIS TRADE WORTH YOUR TIME AND CAPITAL?")
 
 colA, colB = st.columns([2, 1])
 with colA:
@@ -98,20 +99,22 @@ with colB:
     anchors = ASSET_ANCHORS.get(asset, {})
     macro_anchor = anchors.get("Macro Anchor", "—")
     val_anchor = anchors.get("Val Anchor", "—")
+    # Macro Anchor: light blue for all
     st.markdown(color_box("Macro Anchor (COT / Macro):", macro_anchor, "#e0f2ff", "#1e3a8a"), unsafe_allow_html=True)
+    # Val Anchor: colored by type (incl. red for 'Macro')
     st.markdown(val_anchor_box(val_anchor), unsafe_allow_html=True)
 
 st.divider()
 
-# Phase selection
+# Phase selection (added Ranging Market)
 flow_phase = st.radio(
     "2) Flow phase",
-    ["Pro Flow", "Counter Flow"],
-    help="Pro Flow = with trend, internal intact (phase 1). Counter Flow = internal trend broken with intention (phase 2)."
+    ["Pro Flow", "Counter Flow", "Ranging Market"],
+    help="Pro Flow = with trend, internal intact. Counter Flow = internal broken with intention. Ranging = clear range within internal structure."
 )
 
 reasons = []
-final_decision = None
+final_decision = None  # "Proximal Entry" / "Inducement Entry" / "Liquidity Entry" / "Trade Not Valid"
 
 # =========================
 # PRO FLOW
@@ -155,7 +158,7 @@ if flow_phase == "Pro Flow":
 # =========================
 # COUNTER FLOW
 # =========================
-else:
+elif flow_phase == "Counter Flow":
     st.subheader("Counter Flow Questions")
     q1 = st.radio("Is the Daily zone at a clean WEEKLY OB or swing point?", ["Yes", "No"])
     if q1 == "No":
@@ -206,6 +209,73 @@ else:
                 final_decision = provisional
 
 # =========================
+# RANGING MARKET
+# =========================
+else:
+    st.subheader("Ranging Market Questions")
+    # Q1: clear range within internal structure
+    r1 = st.radio("Has the market formed a clear range, contained within internal structure?", ["Yes", "No"])
+    if r1 == "No":
+        final_decision = "Trade Not Valid"
+        reasons.append("No clear, contained range → trade invalid.")
+
+    # Q2: primary Val Signal or TDI active?
+    r2 = st.radio("Is the Primary Val Signal or TDI active?", ["Yes", "No"])
+    if final_decision is None and r2 == "No":
+        final_decision = "Trade Not Valid"
+        reasons.append("Primary Val Signal / TDI not active → trade invalid.")
+
+    # Q3: zone at extremity of range?
+    r3 = st.radio("Is the Zone at the extremity of the range?", ["Yes", "No"])
+    if final_decision is None and r3 == "No":
+        final_decision = "Trade Not Valid"
+        reasons.append("Zone not at range extremity (no value).")
+
+    # Q4: inducement present into entry (liquidity entry counts)
+    r4 = st.radio("Is there inducement present coming into the entry? (Liquidity entry counts as inducement)", ["Yes", "No"])
+    if final_decision is None and r4 == "No":
+        final_decision = "Trade Not Valid"
+        reasons.append("No inducement present → prone to traps (trade invalid).")
+
+    # Q5: liquidity traps around zone?
+    r5 = st.radio("Are there any liquidity traps around the Zone?", ["No", "Yes"])
+    ranging_prefer_liquidity = (r5 == "Yes")
+    if ranging_prefer_liquidity:
+        reasons.append("Liquidity traps around zone → must be Liquidity Entry or the next HQ zone if close (within range).")
+
+    # Q6: cleanliness → entry mapping
+    if final_decision is None:
+        clean_choice = st.radio("Is the zone formation clean?", [
+            "Yes — Clean (no large wicks)",
+            "Yes — Clean, but with a large wick",
+            "No — but clear swing point of the range"
+        ])
+        if clean_choice.startswith("Yes — Clean (no large wicks)"):
+            provisional = "Proximal Entry"
+            reasons.append("Zone clean → proximal/body entry allowed.")
+        elif clean_choice.startswith("Yes — Clean, but with a large wick"):
+            provisional = "Inducement Entry"
+            reasons.append("Zone clean but with large wick → inducement entry.")
+        else:
+            provisional = "Liquidity Entry"
+            reasons.append("Zone not clean but clear swing point of the range → liquidity sweep entry.")
+
+        # Q7: clear intent within the range?
+        r7 = st.radio("Did the Zone cause clear intent within the range?", ["Yes", "No"])
+        if r7 == "No":
+            final_decision = "Trade Not Valid"
+            reasons.append("Zone did not cause clear intent (no true S/D) → trade invalid.")
+        else:
+            if ranging_prefer_liquidity:
+                final_decision = "Liquidity Entry"
+            else:
+                final_decision = provisional
+
+        # Note for all valid ranging trades
+        if final_decision != "Trade Not Valid":
+            reasons.append("Target range liquidity.")
+
+# =========================
 # Verdict
 # =========================
 st.divider()
@@ -225,6 +295,9 @@ st.markdown(
 st.markdown("**Reasons:**")
 for r in reasons:
     st.write("- " + r)
+
+# Global note for all phases
+st.caption("Note: Use HTF for final refinement if the zone is large.")
 
 # Notes & Risk + Logger
 st.markdown("### Notes & Risk")
